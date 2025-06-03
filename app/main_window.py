@@ -107,6 +107,136 @@ class MainWindow(customtkinter.CTk):
         self.destination_folder = ""
         self.photo_selection_vars = {} # Para armazenar {filepath: tk.BooleanVar()}
 
+        # Dentro de __init__ da classe MainWindow em app/main_window.py
+
+        # ... (outros botões no self.control_frame) ...
+        self.organize_ai_button = customtkinter.CTkButton(self.control_frame, 
+                                                        text="Organizar Tudo com IA", 
+                                                        command=self.process_ai_organization)
+        self.organize_ai_button.pack(side="left", padx=10, pady=5) # Ajuste 'side' e 'padx/pady' conforme necessário
+
+        def process_ai_organization(self):
+            if not self.current_folder:
+                messagebox.showerror("Erro", "Nenhuma pasta de origem com fotos foi selecionada.")
+                return
+            if not self.destination_folder:
+                messagebox.showerror("Erro", "Nenhuma pasta de destino foi selecionada para salvar as fotos organizadas.")
+                return
+
+            if not initialize_ai_model(): # Garante que o modelo de IA esteja pronto
+                messagebox.showerror("Erro de IA", "Não foi possível inicializar o modelo de IA. Verifique o terminal para mensagens de ERRO CRÍTICO [AI].")
+                return
+
+            # self.image_files é populado por self.select_folder()
+            if not self.image_files:
+                messagebox.showinfo("Informação", "Nenhuma imagem encontrada na pasta de origem para organizar.")
+                return
+
+            # Janela de Progresso Simples
+            progress_window = customtkinter.CTkToplevel(self)
+            progress_window.title("Processando...")
+            progress_window.geometry("400x150")
+            progress_window.resizable(False, False)
+            progress_window.grab_set() # Impede interação com a janela principal
+            
+            progress_label_title = customtkinter.CTkLabel(progress_window, text="Organização Automática com IA", font=customtkinter.CTkFont(size=16, weight="bold"))
+            progress_label_title.pack(pady=(10,5))
+            
+            progress_status_label = customtkinter.CTkLabel(progress_window, text="Inicializando...")
+            progress_status_label.pack(pady=5)
+            
+            # (Opcional) Barra de progresso - mais complexa para atualizar em tempo real sem threads
+            # progress_bar = customtkinter.CTkProgressBar(progress_window, orientation="horizontal", mode="determinate")
+            # progress_bar.set(0)
+            # progress_bar.pack(pady=10, padx=10, fill="x")
+            
+            self.update_idletasks() # Atualiza a UI para mostrar a janela de progresso
+
+            photos_to_categorize_map_ai = {}
+            total_files = len(self.image_files)
+            
+            print(f"\nINFO [AI Org]: Iniciando organização com IA para {total_files} imagens...")
+
+            for i, img_path in enumerate(self.image_files):
+                status_text = f"Processando imagem {i+1} de {total_files}:\n{os.path.basename(img_path)}"
+                print(status_text) # Log no terminal
+                progress_status_label.configure(text=status_text) # Atualiza label na UI
+                # progress_bar.set(float(i+1)/total_files) # Atualiza barra de progresso
+                progress_window.update_idletasks() # Força atualização da UI de progresso
+
+                ai_results = predict_image_content(img_path, num_results=5) # Pega os 5 principais resultados da IA
+                
+                # USER_CATEGORIES_MAP e USER_DEFAULT_CATEGORY são definidos no escopo da classe ou globalmente neste arquivo
+                category = map_ai_labels_to_user_category(ai_results, USER_CATEGORIES_MAP, USER_DEFAULT_CATEGORY)
+                photos_to_categorize_map_ai[img_path] = category
+                print(f"  -> Categoria IA: {category}")
+
+            progress_status_label.configure(text="Processamento de IA concluído! Movendo arquivos...")
+            # progress_bar.set(1)
+            progress_window.update_idletasks()
+            print("INFO [AI Org]: Processamento de IA concluído.")
+
+            if not photos_to_categorize_map_ai:
+                progress_window.destroy()
+                messagebox.showinfo("Concluído", "Nenhuma categoria pôde ser atribuída ou não havia fotos para processar.")
+                return
+
+            # Mover os arquivos para as pastas de categoria
+            print(f"INFO [AI Org]: Movendo {len(photos_to_categorize_map_ai)} fotos para '{self.destination_folder}'...")
+            success_moving = categorize_photos(destination_base_folder=self.destination_folder,
+                                            photo_category_map=photos_to_categorize_map_ai)
+
+            if not success_moving:
+                progress_window.destroy()
+                messagebox.showerror("Erro na Organização", "Ocorreu um erro ao mover os arquivos para as pastas de categoria. Verifique o terminal.")
+                return
+            
+            progress_status_label.configure(text="Fotos movidas! Gerando log...")
+            progress_window.update_idletasks()
+            print("INFO [AI Org]: Fotos movidas com sucesso.")
+
+            # Gerar log de texto
+            self.generate_organization_log(photos_to_categorize_map_ai, self.destination_folder, self.current_folder)
+
+            # Criar o arquivo ZIP
+            progress_status_label.configure(text="Criando arquivo ZIP...")
+            progress_window.update_idletasks()
+            print(f"INFO [AI Org]: Criando arquivo ZIP das pastas organizadas em {self.destination_folder}...")
+            
+            default_zip_name = f"Fotos_Organizadas_IA_{os.path.basename(self.current_folder)}_{datetime.datetime.now().strftime('%Y%m%d')}.zip"
+            
+            progress_window.grab_release() # Libera a janela principal para o diálogo de salvar
+            progress_window.withdraw() # Esconde a janela de progresso temporariamente
+
+            zip_save_path = filedialog.asksaveasfilename(
+                master=self, # Garante que o diálogo apareça sobre a janela principal
+                title="Salvar ZIP com as Fotos Organizadas",
+                defaultextension=".zip",
+                initialfile=default_zip_name,
+                filetypes=[("Arquivos ZIP", "*.zip")]
+            )
+            
+            progress_window.deiconify() # Mostra novamente
+            progress_window.grab_set()
+
+            if zip_save_path:
+                progress_status_label.configure(text=f"Salvando ZIP em:\n{os.path.basename(zip_save_path)}...")
+                progress_window.update_idletasks()
+                zip_success = create_zip_of_organized_folders(self.destination_folder, zip_save_path) # Função de utils.py
+                if zip_success:
+                    progress_window.destroy() # Fecha a janela de progresso
+                    messagebox.showinfo("Sucesso Total!", f"Fotos organizadas, log gerado e arquivo ZIP salvo com sucesso em:\n{zip_save_path}")
+                else:
+                    progress_window.destroy()
+                    messagebox.showerror("Erro ao Criar ZIP", "Não foi possível criar o arquivo ZIP. Verifique o terminal.")
+            else:
+                progress_window.destroy()
+                messagebox.showinfo("Criação de ZIP Cancelada", "A criação do arquivo ZIP foi cancelada. As fotos foram organizadas na pasta de destino e o log foi gerado.")
+
+            # Atualizar lista de arquivos da pasta de origem (se as fotos foram movidas e não copiadas)
+            self.image_files = get_image_files(self.current_folder) 
+            self.populate_folder_photos_list() # Para atualizar a UI da lista de categorização manual, se visível
+
     def select_folder(self): # Modificada
         folder_path = filedialog.askdirectory()
         if folder_path:
@@ -132,6 +262,38 @@ class MainWindow(customtkinter.CTk):
             self.clear_folder_photos_list()
             self.update_categorize_button_state()
 
+
+    def generate_organization_log(self, categorized_map, destination_base, source_folder_path):
+            log_filename = f"log_organizacao_ia_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            # Salva o log na pasta de destino junto com as pastas organizadas
+            log_filepath = os.path.join(destination_base, log_filename) 
+
+            try:
+                with open(log_filepath, 'w', encoding='utf-8') as f:
+                    f.write(f"Relatório de Organização de Fotos por IA - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    f.write(f"Pasta de Origem Processada: {source_folder_path}\n")
+                    f.write(f"Pasta de Destino (Base para Categorias): {destination_base}\n")
+                    f.write("----------------------------------------------------------\n")
+                    f.write("Detalhes da Organização:\n")
+                    f.write("----------------------------------------------------------\n\n")
+                    
+                    for original_path, category in categorized_map.items():
+                        filename = os.path.basename(original_path)
+                        # O caminho final exato pode variar se houver renomeação de duplicatas em categorize_photos
+                        final_path_in_category = os.path.join(destination_base, category, filename) 
+                        
+                        f.write(f"Arquivo Original: {original_path}\n")
+                        f.write(f"  -> Categoria Atribuída pela IA: {category}\n")
+                        f.write(f"  -> Localização Estimada Pós-Organização: {final_path_in_category}\n\n")
+                    
+                    f.write("----------------------------------------------------------\n")
+                    f.write(f"Total de {len(categorized_map)} fotos processadas neste relatório.\n")
+                    f.write("Fim do Relatório.\n")
+                print(f"INFO [Log]: Log de organização salvo em: {log_filepath}")
+            except Exception as e:
+                print(f"ERRO [Log]: Falha ao gerar o log de organização: {e}")
+                # Não mostra um messagebox aqui para não interromper o fluxo se o ZIP já foi oferecido.
+                # O erro já foi impresso no terminal.
     # def list_photos_in_folder(self): # Exemplo de como listar fotos
     #     for widget in self.photos_list_frame.winfo_children():
     #         widget.destroy()

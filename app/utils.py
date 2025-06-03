@@ -1,6 +1,7 @@
 # app/utils.py
 import os
 import hashlib
+import zipfile # ADICIONE esta importação
 
 def calculate_file_hash(filepath, hash_algo="sha256", block_size=65536):
     """Calcula o hash de um arquivo."""
@@ -65,3 +66,37 @@ def get_image_files(folder_path):
             
     print(f"[DEBUG get_image_files] Total de imagens encontradas na função: {len(image_files)}") # Adicionado
     return image_files
+
+
+def create_zip_of_organized_folders(source_dir_to_zip, zip_file_path):
+    """
+    Cria um arquivo ZIP contendo todas as subpastas e arquivos 
+    diretamente dentro de source_dir_to_zip.
+    source_dir_to_zip é a pasta de destino que contém as pastas de categoria.
+    """
+    if not os.path.isdir(source_dir_to_zip):
+        print(f"ERRO [ZIP]: Diretório de origem para zipar não existe: {source_dir_to_zip}")
+        return False 
+
+    try:
+        print(f"INFO [ZIP]: Iniciando criação do ZIP '{zip_file_path}' a partir de '{source_dir_to_zip}'")
+        with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(source_dir_to_zip):
+                # Adiciona as pastas (incluindo vazias)
+                for folder_name in dirs:
+                    folder_path = os.path.join(root, folder_name)
+                    archive_folder_path = os.path.relpath(folder_path, source_dir_to_zip)
+                    # Adiciona uma entrada de diretório para preservar pastas vazias, se necessário
+                    # zipf.write(folder_path, archive_folder_path) # Isso pode não ser necessário para dirs
+
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    # Cria o caminho relativo dentro do ZIP
+                    archive_file_path = os.path.relpath(file_path, source_dir_to_zip)
+                    zipf.write(file_path, archive_file_path)
+                    # print(f"DEBUG [ZIP]: Adicionando ao ZIP: '{file_path}' como '{archive_file_path}'")
+        print(f"INFO [ZIP]: Arquivo ZIP '{zip_file_path}' criado com sucesso.")
+        return True
+    except Exception as e:
+        print(f"ERRO [ZIP]: Falha ao criar o arquivo ZIP em '{zip_file_path}' de '{source_dir_to_zip}': {e}")
+        return False
